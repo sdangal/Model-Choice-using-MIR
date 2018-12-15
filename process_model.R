@@ -64,26 +64,21 @@ merged.data$spc <- base_offset(merged.data$spc)
 full.oc <- merged.data[!is.na(merged.data$OC),] ## repeat this step for other soil properties -- Al, Ca, CO3, pH, Fe, Ca, BD, OCD, Clay.
 save(full.oc, file = "full.oc.RData")
 
-### step 5: perform kennard stone to separate data into 80% calibration and 20% validation sets
+### step 5: remove outliers by selecting using a standard deviaton threshold
+fit.oc <- plsr(sqrt(OC)~spc, ncomp=20, data = full.oc, valid="CV", segments = 50)
+pred.coc <- predict(fit.oc, newdata = full.oc$spc,ncomp=20)
+sd.outlier <- optimum_sd_outlier(pred, resp, seq(0.1,3, by =0.02))
+row.index <- outlier(pred, resp, sd.outlier[1])
+full.oc <- full.oc[row.index,]
+
+
+### step 6: perform kennard stone to separate data into 80% calibration and 20% validation sets
 ks.OC <- kenStone(X = full.oc$spc, k = as.integer(0.8*nrow(full.oc)), metric = "mahal", pc = 10) ## repeat this step for other soil properties -- Al, Ca, CO3, pH, Fe, Ca, BD, OCD, Clay.
 calib.oc <- full.oc[ks.OC$model, ]
 valid.oc <- full.oc[ks.OC$test, ]
 save(calib.oc, file = "calib.oc.RData")
 save(valid.oc, file = "valid.oc.RData")
 
-### step 6: build plsr model to remove outliers
-## Note: repeat this step for all other nine soil properties
-## max ncomp is set to 20 while detecting outliers
-fit.oc <- plsr(sqrt(OC)~spc, ncomp=20, data = calib.oc, valid="CV", segments = 50)
-pred.calib <- predict(fit.oc, newdata = calib.oc$spc,ncomp=20)
-pred.valid <- predict(fit.oc, newdata = valid.oc$spc, ncomp=20)
-##detect outliers
-calib.row.index <- outlier(calib.oc$OC, pred.calib[,1,1]^2,0.75) ## this function uses sd to remove the max of 1% of the data
-valid.row.index <- outlier(valid.oc$OC, pred.valid[,1,1]^2,0.75)
-sub.calib.oc <- calib.oc[calib.row.index,]
-sub.valid.oc <- valid.oc[valid.row.index,]
-save(sub.calib.oc, file = "sub.calib.oc.RData")
-save(sub.valid.oc, file = "sub.valid.oc.RData")
 
 ###step 7: build models using box-cox, log, squareroot and untransformed soil properties to test model performance with and without normal distribution
 ### only pH and OC carbon models were built for testing model performance using different transformations
@@ -353,208 +348,4 @@ for(i in 1:length(ydev)){
 
 
 ##Step 12: flagging samples that are untrustworthy
-## currently flagging is performed on randomly selected 500 samples for OC and BD
-## Flagging is only done for RF, SBL and Global PLSR
-
-##read randomly selected 500 samples
-oc <- read.csv("C:/Users/sdangal/Documents/ModelChoice_17SEPT2018/newResults/uncertainty/oc.500.csv")
-bd <- read.csv("C:/Users/sdangal/Documents/ModelChoice_17SEPT2018/newResults/uncertainty/bd.500.csv")
-
-##Read all prediction and udeviation for OC and BD
-sbl.unc.oc <- read.csv("C:/Users/sdangal/Documents/ModelChoice_17SEPT2018/newResults/uncertainty/sbl.pred.oc.csv")
-rf.unc.oc <- read.csv("C:/Users/sdangal/Documents/ModelChoice_17SEPT2018/newResults/uncertainty/rf.pred.oc.csv")
-pls.unc.oc <- read.csv("C:/Users/sdangal/Documents/ModelChoice_17SEPT2018/newResults/uncertainty/pls.pred.oc.csv")
-sbl.unc.bd <- read.csv("C:/Users/sdangal/Documents/ModelChoice_17SEPT2018/newResults/uncertainty/sbl.pred.bd.csv")
-rf.unc.bd <- read.csv("C:/Users/sdangal/Documents/ModelChoice_17SEPT2018/newResults/uncertainty/rf.pred.bd.csv")
-pls.unc.bd <- read.csv("C:/Users/sdangal/Documents/ModelChoice_17SEPT2018/newResults/uncertainty/pls.pred.bd.csv")
-
-##calculate relative deviation distribution in the validation sets
-sbl.unc.oc$reld <- as.numeric(as.character(sbl.unc.oc$udev)) / sbl.unc.oc$pred
-pls.unc.oc$reld <- pls.unc.oc$udev / pls.unc.oc$pred
-rf.unc.oc$reld <- rf.unc.oc$udev / rf.unc.oc$pred
-
-##use quantile function to get the 95th percentile 
-quantile(sbl.unc.oc$reld, 0.95) #0.068
-quantile(pls.unc.oc$reld, 0.95) #0.557
-quantile(rf.unc.oc$reld, 0.95)  #0.403
-
-#screenout outliers using 95th percentile from the randomly selected 500 samples
-oc$sbl.reld <- oc$sbl.udev/oc$sbl.pred
-oc$pls.reld <- oc$pls.udev/oc$pls.pred
-oc$rf.reld <- oc$rf.udev/oc$rf.pred
-
-##################################################
-###   find which prediction is best #############
-#################################################
-
-### Flagging OC samples based on SBL###
-oc.sort <- oc[with(oc, order(oc$sbl.udev, decreasing=FALSE)),]
-x <- 1:500
-avg <- oc.sort$sbl.pred
-udev <- oc.sort$sbl.udev
-rd <- round(mean(oc.sort$sbl.reld),2)
-tiff("sbloc_unc.tiff", width = 8, height = 4, units = 'in', res = 300)
-avg.outl <- oc.sort$sbl.pred[oc.sort$sbl.reld > 0.068]
-udev.outl <- oc.sort$sbl.udev[oc.sort$sbl.reld > 0.068]
-ind <- which(oc.sort$sbl.pred %in% avg.outl)
-par(mar = c(5, 4, 4, 4) + 0.3)  # Leave space for z axis
-plot(x, avg,
-     ylim = c(0,60), col="white",
-     pch=19, cex=0.1,xlab="", ylab=""
-)
-# hack: we draw arrows but with very special "arrowheads"
-par(new=T)
-plot(x,avg/20,ylim=c(0,3),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted OC (%wt)")
-arrows(x, avg/20-udev, x, avg/20+udev, length=0.04, angle=90,cex=0.05, code=3, col="black",ylim =c(0,3), xlab="NULL", ylab="NULL")
-points(x,avg/20,ylim=c(0,3),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted OC (%wt)")
-arrows(ind, avg.outl/20-udev.outl, ind, avg.outl/20+udev.outl, length=0.04, angle=90, code=3, col = "red")
-points(ind, avg.outl/20, col="red", pch=16, cex=0.1)
-axis(4, ylim =c(0,3), col="black", col.axis="black", las=1)
-mtext(side = 4, line = 3, 'Deviation (%wt)')
-text(0,2.9, paste0("(a) Relative Deviation = ",rd), pos=4)
-dev.off()
-
-### Flagging OC samples based on PLSR###
-x <- 1:500
-avg <- oc.sort$pls.pred
-udev <- oc.sort$pls.udev
-rd <- round(mean(oc.sort$pls.reld),2)
-tiff("plsoc_unc.tiff", width = 8, height = 4, units = 'in', res = 300)
-avg.outl <- oc.sort$pls.pred[oc.sort$pls.reld > 0.557]
-udev.outl <- oc.sort$pls.udev[oc.sort$pls.reld > 0.557]
-ind <- which(oc.sort$pls.pred %in% avg.outl)
-par(mar = c(5, 4, 4, 4) + 0.3)  # Leave space for z axis
-plot(x, avg,
-     ylim = c(0,60), col="white",
-     pch=19, cex=0.1,xlab="", ylab=""
-)
-# hack: we draw arrows but with very special "arrowheads"
-par(new=T)
-plot(x,avg/5,ylim=c(0,12),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted OC (%wt)")
-arrows(x, avg/5-udev, x, avg/5+udev, length=0.04, angle=90,cex=0.05, code=3, col="black",ylim =c(0,12), xlab="NULL", ylab="NULL")
-points(x,avg/5,ylim=c(0,12),pch=19,cex=0.1, xlab="Samples", ylab="Predicted OC (%wt)")
-arrows(ind, avg.outl/5-udev.outl, ind, avg.outl/5+udev.outl, length=0.04, angle=90, code=3, col = "red")
-points(ind, avg.outl/5, col="red", pch=16, cex=0.1)
-axis(4, ylim =c(0,12), col="black", col.axis="black", las=1)
-mtext(side = 4, line = 3, 'Deviation (%wt)')
-text(0,11.5, paste0("(b) Relative Deviation = ",rd), pos=4)
-dev.off()
-
-### Flagging OC samples based on Random Forest###
-x <- 1:500
-avg <- oc.sort$rf.pred
-udev <- oc.sort$rf.udev
-rd <- round(mean(oc.sort$rf.reld),2)
-tiff("rfoc_unc.tiff", width = 8, height = 4, units = 'in', res = 300)
-avg.outl <- oc.sort$rf.pred[oc.sort$rf.reld > 0.403]
-udev.outl <- oc.sort$rf.udev[oc.sort$rf.reld > 0.403]
-ind <- which(oc.sort$rf.pred %in% avg.outl)
-par(mar = c(5, 4, 4, 4) + 0.3)  # Leave space for z axis
-plot(x, avg,
-     ylim = c(0,60), col="white",
-     pch=19, cex=0.1,xlab="", ylab=""
-)
-# hack: we draw arrows but with very special "arrowheads"
-par(new=T)
-plot(x,avg/2,ylim=c(0,30),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted OC (%wt)")
-arrows(x, avg/2-udev, x, avg/2+udev, length=0.04, angle=90,cex=0.05, code=3, col="black",ylim =c(0,30), xlab="NULL", ylab="NULL")
-points(x,avg/2,ylim=c(0,30),pch=19,cex=0.1, xlab="Samples", ylab="Predicted OC (%wt)")
-points(ind, avg.outl/2, col="red", pch=16, cex=0.1)
-arrows(ind, avg.outl/2-udev.outl, ind, avg.outl/2+udev.outl, length=0.04, angle=90, code=3, col = "red")
-axis(4, ylim =c(0,30), col="black", col.axis="black", las=1)
-mtext(side = 4, line = 3, 'Deviation (%wt)')
-text(0,28, paste0("(c) Relative Deviation = ",rd), pos=4)
-dev.off()
-
-### Flagging BD samples based on SBL###
-sbl.unc.bd$reld <- sbl.unc.bd$udev / sbl.unc.bd$pred
-pls.unc.bd$reld <- pls.unc.bd$udev / pls.unc.bd$pred
-rf.unc.bd$reld <- rf.unc.bd$udev / rf.unc.bd$pred
-
-##use quantile function to get the 95th percentile 
-quantile(sbl.unc.bd$reld, 0.95) #0.156
-quantile(pls.unc.bd$reld, 0.95) #0.070
-quantile(rf.unc.bd$reld, 0.95)  #0.057
-
-#screenout outliers using 95th percentile from the randomly selected 500 samples
-bd$sbl.reld <- bd$sbl.udev/bd$sbl.pred
-bd$pls.reld <- bd$pls.udev/bd$pls.pred
-bd$rf.reld <- bd$rf.udev/bd$rf.pred
-
-bd.sort <- bd[with(bd, order(bd$sbl.udev, decreasing=FALSE)),]
-x <- 1:500
-avg <- bd.sort$sbl.pred
-udev <- bd.sort$sbl.udev
-rd <- round(mean(bd.sort$sbl.reld),2)
-tiff("sblbd_unc.tiff", width = 8, height = 4, units = 'in', res = 300)
-avg.outl <- bd.sort$sbl.pred[bd.sort$sbl.reld > 0.156]
-udev.outl <- bd.sort$sbl.udev[bd.sort$sbl.reld > 0.156]
-ind <- which(bd.sort$sbl.pred %in% avg.outl)
-par(mar = c(5, 4, 4, 4) + 0.3)  # Leave space for z axis
-plot(x, avg,
-     ylim = c(0.5,3.5), col="white",
-     pch=19, cex=0.1,xlab="", ylab=""
-)
-# hack: we draw arrows but with very special "arrowheads"
-par(new=T)
-plot(x,avg,ylim=c(0.5,3.5),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted BD (g/cm3)")
-arrows(x, avg-udev, x, avg+udev, length=0.04, angle=90,cex=0.05, code=3, col="black",ylim =c(0,3), xlab="NULL", ylab="NULL")
-points(x,avg,ylim=c(0.5,3.5),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted BD (g/cm3)")
-arrows(ind, avg.outl-udev.outl, ind, avg.outl+udev.outl, length=0.04, angle=90, code=3, col = "red")
-points(ind, avg.outl, col="red", pch=16, cex=0.1)
-axis(4, ylim =c(0.5,3.5), col="black", col.axis="black", las=1)
-mtext(side = 4, line = 3, 'Deviation (g/cm3)')
-text(0,3.4, paste0("(d) Relative Deviation = ",rd), pos=4)
-dev.off()
-
-### Flagging BD samples based on PLSR###
-x <- 1:500
-avg <- bd.sort$pls.pred
-udev <- bd.sort$pls.udev
-rd <- round(mean(bd.sort$pls.reld),2)
-tiff("plsbd_unc.tiff", width = 8, height = 4, units = 'in', res = 300)
-avg.outl <- bd.sort$pls.pred[bd.sort$pls.reld > 0.07]
-udev.outl <- bd.sort$pls.udev[bd.sort$pls.reld > 0.07]
-ind <- which(bd.sort$pls.pred %in% avg.outl)
-par(mar = c(5, 4, 4, 4) + 0.3)  # Leave space for z axis
-plot(x, avg,
-     ylim = c(0.5,3.5), col="white",
-     pch=19, cex=0.1,xlab="", ylab=""
-)
-# hack: we draw arrows but with very special "arrowheads"
-par(new=T)
-plot(x,avg,ylim=c(0.5,3.5),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted BD (g/cm3)")
-arrows(x, avg-udev, x, avg+udev, length=0.04, angle=90,cex=0.05, code=3, col="black",ylim =c(0,3), xlab="NULL", ylab="NULL")
-points(x,avg,ylim=c(0.5,3.5),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted BD (g/cm3)")
-arrows(ind, avg.outl-udev.outl, ind, avg.outl+udev.outl, length=0.04, angle=90, code=3, col = "red")
-points(ind, avg.outl, col="red", pch=16, cex=0.1)
-axis(4, ylim =c(0.5,3.5), col="black", col.axis="black", las=1)
-mtext(side = 4, line = 3, 'Deviation (g/cm3)')
-text(0,3.4, paste0("(e) Relative Deviation = ",rd), pos=4)
-dev.off()
-
-### Flagging BD samples based on RF###
-x <- 1:500
-avg <- bd.sort$rf.pred
-udev <- bd.sort$rf.udev
-rd <- round(mean(bd.sort$pls.reld),2)
-tiff("rfbd_unc.tiff", width = 8, height = 4, units = 'in', res = 300)
-avg.outl <- bd.sort$rf.pred[bd.sort$rf.reld > 0.057]
-udev.outl <- bd.sort$rf.udev[bd.sort$rf.reld > 0.057]
-ind <- which(bd.sort$rf.pred %in% avg.outl)
-par(mar = c(5, 4, 4, 4) + 0.3)  # Leave space for z axis
-plot(x, avg,
-     ylim = c(0.5,3.5), col="white",
-     pch=19, cex=0.1,xlab="", ylab=""
-)
-# hack: we draw arrows but with very special "arrowheads"
-par(new=T)
-plot(x,avg,ylim=c(0.5,3.5),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted BD (g/cm3)")
-arrows(x, avg-udev, x, avg+udev, length=0.04, angle=90,cex=0.05, code=3, col="black",ylim =c(0,3), xlab="NULL", ylab="NULL")
-points(x,avg,ylim=c(0.5,3.5),pch=19,cex=0.1,axes=FALSE, xlab="Samples", ylab="Predicted BD (g/cm3)")
-arrows(ind, avg.outl-udev.outl, ind, avg.outl+udev.outl, length=0.04, angle=90, code=3, col = "red")
-points(ind, avg.outl, col="red", pch=16, cex=0.1)
-axis(4, ylim =c(0.5,3.5), col="black", col.axis="black", las=1)
-mtext(side = 4, line = 3, 'Deviation (g/cm3)')
-text(0,3.4, paste0("(f) Relative Deviation = ",rd), pos=4)
-dev.off()
+## see fratio_plsr, fratio_sbl and reld_rf.R scripts to assess the trustworthines of new prediction
