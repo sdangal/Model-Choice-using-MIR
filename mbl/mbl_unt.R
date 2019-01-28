@@ -934,11 +934,18 @@ mbl <- function(Yr, Xr, Yu = NULL, Xu,
                                                              noise.v = noise.v, range.pred.lim = mblCtrl$range.pred.lim,
                                                              pls.max.iter = pls.max.iter, pls.tol = pls.tol)
 									
-                                        #cat(i.pred$prediction, "\n")
+                                        #cat(str(i.pred), "\n")
 										predobs$pred[kk] <- i.pred$prediction
 										
-										predobs$tmp.res.y[kk] <- (predobs$pred[kk] - predobs$yu.obs[kk])^2
+										#predobs$tmp.res.y[kk] <- (predobs$pred[kk] - predobs$yu.obs[kk])^2
+										#cat(predobs$pred[kk], "\n")
+										#cat(str(i.pred), "\n")
+										#cat(str(tmp.cal$mat),"\n")
 										
+										#predobs$tmp.res.y[kk] <- (predobs$pred[kk] - predobs$yu.obs[kk])^2
+										predobs$tmp.res.y[kk] <- i.pred$validation$cvResults$rmse.cv^2
+										
+										#cat(predobs$tmp.res.y[kk], predobs$tmp1.res.y[kk], "\n")
 										##added by shree dangal on 03/28/2018 for more detailed output including coefficient and intercept 
 										
 										int.bo <- i.pred$validation$models$bo
@@ -962,13 +969,22 @@ mbl <- function(Yr, Xr, Yu = NULL, Xu,
 										x.scores <- i.pred$validation$models$scores
 										x.loadings <- i.pred$validation$models$X.loadings
 										
-										#Estimate ResXValSamp
+										#Estimate ResXValSamp -- based on calibration sets
 										valid.TT <- (tmp.val$mat - Xmeans.cal) %*% x.proj		#Xscores for Validation sets										
 										temp.x <- valid.TT %*% x.loadings
 										predobs$res.val[kk] <- rowMeans((-temp.x + (tmp.val$mat - Xmeans.cal))^2)
 										
-										#Estimate ResXValTot -- estimated as the root mean square error from cross validation
-										#ResXValTot is simply the mean of the error of the cross validation results -- different than the Global PLSR ResXValTot
+										#Estimate ResXValTot -- based on validation spectra
+										#ResXValTot is strictly calculated using only the spectra in the cross validation sets pertaining to each validation samples 
+										crossval.spc <- matrix(0, nrow=nrow(i.pred$validation$resamples), ncol=ncol(tmp.val$mat))
+										temp <- 0
+										for(t in 1:ncol(i.pred$validation$resamples)){
+										crossval.spc[t,] <- scale(tmp.cal$mat[t,], scale=FALSE)
+										temp <- temp + mean(crossval.spc^2)
+										}
+										temp1 <- temp / ncol(i.pred$validation$resamples)  ##get mean by dividing the res by # of cross validation sets.
+										predobs$res.crossval.spc[kk] <- temp1
+										
 										
 										#Estimate Leverage -- requires calibration and validation scores
 										#calib scores = x.scores and valid scores = valid.TT
@@ -1031,7 +1047,7 @@ mbl <- function(Yr, Xr, Yu = NULL, Xu,
 									
 								  }
 								  
-								  #cat(predobs$tmp.res.y[kk], '\n')
+								 
 								  
                                    if(mblCtrl$progress)
                                      close(pb)
@@ -1091,16 +1107,20 @@ mbl <- function(Yr, Xr, Yu = NULL, Xu,
   #ncalobj <- as.numeric(predobs[[i]]$k)
   ncomp <- predobs[[i]]$pls.comp
   ResXValSamp <- predobs[[i]]$res.val
-  ResXValTot <- predobs[[i]]$loc.rmse.cv^2
+  #ResXValSamp <- predobs[[i]]$res.val.spc
+  ResXValTot <- predobs[[i]]$res.crossval.spc
+  #ResXValTot <- predobs[[i]]$loc.rmse.cv^2
   Leverage <- predobs[[i]]$lev
   ResYValVar <- mean(predobs[[i]]$tmp.res.y)
-  ydev <- sqrt(ResYValVar * (ResXValSamp / ResXValTot + Leverage + 2/ncalobj) * (1-(ncomp+1)/ncalobj))
+  ydev <- sqrt(ResYValVar * (ResXValSamp / ResXValTot + Leverage + 1/ncalobj) * (1-(ncomp+1)/ncalobj))
   predobs[[i]]$ydev <- ydev
   #clean unnessary data output
   predobs[[i]]$tmp.res.y <- NULL
   predobs[[i]]$res.val <- NULL
-  predobs[[i]]$lev <- NULL  
+  predobs[[i]]$lev <- NULL
+  predobs[[i]]$res.crossval.spc <- NULL
     #cat(str(ydev), str(ResYValVar), str(ResXValTot), str(Leverage), "\n")
+	#cat(str(predobs), "\n")
 
   }
   
@@ -1712,14 +1732,15 @@ plsCv <- function(x, y, ncomp,
                      waplsgrid = sgr)
 	#cat("matrix", mrspi)
 	#cat("\n")
-	#cat("pred", rspi)
+	#cat("pred", rspi, "\n")
+	#cat(cvre$rmse.seg,rowMeans(cvre$rmse.seg),  "\n")
   val <- NULL
   val$resamples <- rspi
   if(method == "pls"){
     val$cvResults <- data.frame(nPLS = 1:ncomp, rmse.cv = rowMeans(cvre$rmse.seg), st.rmse.cv = rowMeans(cvre$st.rmse.seg), rmse.sd.cv = cSds(t(cvre$rmse.seg)), rsq.cv = rowMeans(cvre$rsq.seg))
     bestpls.c <- val$cvResults$nPLS[which(val$cvResults$rmse.cv == min(val$cvResults$rmse.cv))]
     val$bestpls.c <- bestpls.c
-
+   #cat(str(cvre), "\n")
     if(retrieve)
     {
       if(!is.null(weights)){
@@ -1771,7 +1792,7 @@ plsCv <- function(x, y, ncomp,
     val$bestpls.c$minF <- val$cvResults$minF[opmls]
     val$bestpls.c$maxF <- val$cvResults$maxF[opmls]
     val$compweights <- cvre$compweights
-    
+
     
     if(!is.null(weights)){
       x <- sweep(x, 1, weights, "*")  ### MODIFIED
